@@ -1,9 +1,30 @@
 <script setup lang="ts">
 type Device = { id: number; name: string; mac: string }
 const devices = ref<Device[]>([]), loading = ref(true), error = ref(''), showForm = ref(false)
+const discovered = ref<{ ip: string; mac: string; vendor: string }[]>([]), discovering = ref(false)
+const states = ref<Record<number, 'unknown' | 'starting' | 'online' | 'offline'>>({})
 const form = reactive({ name: '', mac: '' })
 async function load() { loading.value = true; try { devices.value = await $fetch<Device[]>('/api/devices') } catch { error.value = 'No se pudo conectar con la API.' } finally { loading.value = false } }
-async function wake(id: number) { await $fetch(`/api/devices/${id}/wake`, { method: 'POST' }); await load() }
+async function wake(id: number) {
+    states.value[id] = 'starting'
+    try {
+        await $fetch(`/api/devices/${id}/wake`, { method: 'POST' })
+        const device = devices.value.find(item => item.id === id)
+        if (!device) return
+        for (let attempt = 0; attempt < 30; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 3000))
+            const found = await $fetch<{ mac: string }[]>('/api/discover')
+            if (found.some(item => item.mac.toLowerCase() === device.mac.toLowerCase())) {
+                states.value[id] = 'online'
+                return
+            }
+        }
+        states.value[id] = 'offline'
+    } catch (cause: any) {
+        states.value[id] = 'offline'
+        error.value = cause?.data?.error ?? 'No se pudo enviar Wake-on-LAN.'
+    }
+}
 async function add() {
     error.value = ''
     try {
@@ -17,6 +38,8 @@ async function add() {
     }
 }
 async function remove(id: number) { if (confirm('¿Eliminar este dispositivo?')) { await $fetch(`/api/devices/${id}`, { method: 'DELETE' }); await load() } }
+async function discover() { discovering.value = true; error.value = ''; try { discovered.value = await $fetch('/api/discover') } catch (cause: any) { error.value = cause?.data?.error ?? 'No se pudo descubrir la red.' } finally { discovering.value = false } }
+function useDiscovered(item: { mac: string }) { form.mac = item.mac; showForm.value = true }
 onMounted(load)
 </script>
 <template>
@@ -26,16 +49,17 @@ onMounted(load)
                 <p class="eyebrow">WAKE CONTROL</p>
                 <h1>Mis dispositivos</h1>
                 <p class="muted">Enciende tus equipos con un toque.</p>
-            </div><button class="primary" @click="showForm = !showForm">＋ Añadir</button>
+            </div><div class="header-actions"><button class="secondary" :disabled="discovering" @click="discover">{{ discovering ? 'Buscando…' : '⌕ Descubrir' }}</button><button class="primary" @click="showForm = !showForm">＋ Añadir</button></div>
         </header>
         <form v-if="showForm" class="form card" @submit.prevent="add"><input v-model="form.name" placeholder="Nombre"
                 required><input v-model="form.mac" placeholder="AA:BB:CC:DD:EE:FF"
                     pattern="^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$"
                 title="Formato esperado: AA:BB:CC:DD:EE:FF" required><button class="primary">Guardar</button></form>
         <p v-if="error" class="error">{{ error }}</p>
+        <section v-if="discovered.length" class="discovery card"><h2>Dispositivos encontrados</h2><div v-for="item in discovered" :key="item.mac" class="found"><span><strong>{{ item.ip }}</strong> · {{ item.mac }}<small>{{ item.vendor }}</small></span><button class="secondary" @click="useDiscovered(item)">Usar MAC</button></div></section>
         <section class="grid">
             <article v-for="device in devices" :key="device.id" class="card device">
-                <div class="status"><span />Dispositivo registrado</div>
+                <div class="status" :class="states[device.id]"><span />{{ states[device.id] === 'starting' ? 'Iniciando…' : states[device.id] === 'online' ? 'Online' : states[device.id] === 'offline' ? 'No responde' : 'Registrado' }}</div>
                 <h2>{{ device.name }}</h2>
                 <p class="muted">{{ device.mac }}</p>
                 <div class="actions"><button class="wake" @click="wake(device.id)">⚡ Despertar</button><button
@@ -68,6 +92,8 @@ header {
     align-items: center;
     margin-bottom: 32px
 }
+
+.header-actions { display: flex; gap: 10px; }
 
 .eyebrow {
     color: #8b9cff;
@@ -116,6 +142,10 @@ h1 {
     align-items: center
 }
 
+.status.starting { color: #ffd166; }
+.status.online { color: #65e6a0; }
+.status.offline { color: #ff8e8e; }
+
 .status span {
     width: 10px;
     height: 10px;
@@ -136,6 +166,13 @@ button {
     font-weight: 700;
     cursor: pointer
 }
+
+button:disabled { opacity: .6; cursor: wait; }
+.secondary { background: #26314a; color: #c3cceb; }
+.discovery { margin-bottom: 24px; }
+.discovery h2 { margin-top: 0; }
+.found { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid #26314a; }
+.found small { display: block; color: #8f9bb1; margin-top: 4px; }
 
 .primary {
     background: #7185ff;

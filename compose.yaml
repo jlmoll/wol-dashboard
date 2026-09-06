@@ -25,6 +25,8 @@ services:
     volumes:
       - wol_data:/data
     network_mode: host
+    cap_add:
+      - NET_RAW
 
 networks:
   proxy:

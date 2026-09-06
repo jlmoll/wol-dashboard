@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -16,6 +18,12 @@ type device struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
 	MAC  string `json:"mac"`
+}
+
+type discovered struct {
+	IP     string `json:"ip"`
+	MAC    string `json:"mac"`
+	Vendor string `json:"vendor"`
 }
 
 func main() {
@@ -37,6 +45,7 @@ func main() {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
 	m.HandleFunc("GET /api/devices", func(w http.ResponseWriter, r *http.Request) { list(w, db) })
+	m.HandleFunc("GET /api/discover", func(w http.ResponseWriter, r *http.Request) { discover(w) })
 	m.HandleFunc("POST /api/devices", func(w http.ResponseWriter, r *http.Request) { create(w, r, db) })
 	m.HandleFunc("POST /api/devices/{id}/wake", func(w http.ResponseWriter, r *http.Request) { wake(w, r, db) })
 	m.HandleFunc("DELETE /api/devices/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +56,40 @@ func main() {
 	if err := http.ListenAndServe(":"+getenv("PORT", "8080"), cors(m)); err != nil {
 		l.Error("server stopped", "error", err)
 	}
+}
+
+func discover(w http.ResponseWriter) {
+	cmd := exec.Command("arp-scan", "--localnet")
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		write(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := cmd.Start(); err != nil {
+		write(w, 500, map[string]string{"error": "arp-scan no está instalado en el servidor"})
+		return
+	}
+	items := []discovered{}
+	scanner := bufio.NewScanner(out)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 2 || net.ParseIP(fields[0]) == nil {
+			continue
+		}
+		if _, err := net.ParseMAC(fields[1]); err != nil {
+			continue
+		}
+		vendor := ""
+		if len(fields) > 2 {
+			vendor = strings.Join(fields[2:], " ")
+		}
+		items = append(items, discovered{IP: fields[0], MAC: strings.ToUpper(strings.ReplaceAll(fields[1], "-", ":")), Vendor: vendor})
+	}
+	if err := cmd.Wait(); err != nil {
+		write(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	write(w, 200, items)
 }
 func list(w http.ResponseWriter, db *sql.DB) {
 	rows, e := db.Query("SELECT id,name,mac FROM devices ORDER BY name")
