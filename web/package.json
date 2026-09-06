@@ -1,0 +1,20 @@
+{
+  "name": "web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev --host 0.0.0.0",
+    "build": "nuxt build",
+    "test": "vitest run",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "nuxt": "^4.5.2",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@nuxt/eslint": "latest",
+    "@vitejs/plugin-vue": "latest",
+    "vitest": "latest"
+  }
+}
