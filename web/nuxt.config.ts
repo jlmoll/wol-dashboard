@@ -3,7 +3,7 @@ export default defineNuxtConfig({
   devtools: { enabled: false },
   modules: ['@nuxt/eslint'],
   runtimeConfig: {
-    backendBaseUrl: process.env.BACKEND_BASE_URL ?? 'http://localhost:8080',
+    backendBaseUrl: 'http://localhost:8080',
     public: {
       apiBaseUrl: '/api',
     },
